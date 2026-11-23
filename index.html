@@ -55,20 +55,26 @@
     <h2 id="aqi-heading">Current air quality</h2>
     <div class="aqi-grid">
       <div class="aqi-big" id="aqi-big" aria-live="polite">
+        <p class="aqi-eyebrow">Daily US AQI — 24-hour average</p>
         <p class="aqi-number"><span id="aqi-value">—</span><span class="aqi-unit"> US AQI</span></p>
         <p class="aqi-category"><span id="aqi-category-badge" class="badge badge-unknown">—</span></p>
+        <div class="gauge" role="img" aria-label="AQI gauge, 0 to 500">
+          <div class="gauge-track"><span id="aqi-gauge-marker" class="gauge-marker" style="left: 0%"></span></div>
+          <div class="gauge-scale"><span>0</span><span>50</span><span>100</span><span>150</span><span>200</span><span>300</span><span>500</span></div>
+        </div>
         <p id="aqi-advice" class="aqi-advice">—</p>
         <p class="aqi-meta"><span id="aqi-place">Delhi</span> · <span id="aqi-updated">—</span></p>
-        <p class="aqi-meta">EU AQI: <span id="aqi-eu">—</span> · Dominant pollutant: <span id="aqi-dominant">—</span></p>
+        <p class="aqi-meta">This hour: <strong id="aqi-hourly">—</strong> · EU AQI: <span id="aqi-eu">—</span></p>
+        <p class="aqi-meta">CPCB AQI (India): <strong id="aqi-cpcb">—</strong> <span id="aqi-cpcb-badge" class="badge badge-unknown">—</span></p>
+        <p class="aqi-meta">Dominant pollutant: <span id="aqi-dominant">—</span></p>
+        <p class="aqi-source" id="aqi-source">Source: Open-Meteo Air Quality API.</p>
+        <p class="aqi-disclaimer">Open-Meteo is a modelled forecast, not a monitoring station. The daily AQI uses 24-hour averages; the “this hour” AQI uses this hour's PM2.5 on the current EPA table.</p>
+        <button type="button" id="refresh-btn" class="btn">↻ Refresh live data</button>
       </div>
       <div>
-        <h3>Pollutants <span class="small">(µg/m³, latest hour)</span></h3>
-        <table class="pollutants" id="pollutant-table">
-          <caption class="visually-hidden">Pollutant concentrations compared with WHO 2021 guideline values</caption>
-          <thead><tr><th scope="col">Pollutant</th><th scope="col">Now</th><th scope="col">WHO guideline</th><th scope="col">vs guideline</th></tr></thead>
-          <tbody><!-- built by app.js --></tbody>
-        </table>
-        <p class="small">WHO 2021 guidelines shown are 24-hour means, except ozone (peak-season 8-hour mean) and carbon monoxide (4 mg/m³ = 4000 µg/m³, 24-hour mean).</p>
+        <h3>Pollutants <span class="small">(µg/m³, latest hour — bars vs the WHO guideline)</span></h3>
+        <ul class="pollutant-bars" id="pollutant-bars"><!-- built by app.js --></ul>
+        <p class="small">Bars show each pollutant against its WHO 2021 guideline (24-hour mean, except ozone: peak-season 8-hour mean; carbon monoxide: 4 mg/m³ = 4000 µg/m³, 24-hour mean). A bar past the line means the guideline is exceeded.</p>
       </div>
     </div>
   </section>
@@ -76,7 +82,7 @@
   <!-- ============ 3. 24-hour forecast ============ -->
   <section aria-labelledby="forecast-heading" class="card">
     <h2 id="forecast-heading">Next 24 hours</h2>
-    <p class="small">Hourly US AQI forecast. Each bar is coloured by its AQI category (green to dark red).</p>
+    <p class="small">Hourly US AQI forecast, computed from each hour's PM2.5 on the current EPA table. Bars are coloured by AQI category; the cleanest and worst hours are marked.</p>
     <div id="chart" role="img" aria-label="Hourly air quality forecast chart">Loading chart…</div>
     <p id="best-worst" class="best-worst" aria-live="polite"></p>
   </section>
@@ -210,7 +216,7 @@
 
 <footer class="site-footer">
   <div class="wrap">
-    <p><strong>Data:</strong> Live air quality &amp; geocoding: <a href="https://open-meteo.com/en/docs/air-quality-api">Open-Meteo Air Quality API</a> and <a href="https://open-meteo.com/en/docs/geocoding-api">Geocoding API</a> (free, no key). AQI categories: US EPA. Guidelines: WHO 2021 (PM2.5 24-hour 15 µg/m³; annual 5 µg/m³).</p>
+    <p><strong>Data:</strong> Live air quality &amp; geocoding: <a href="https://open-meteo.com/en/docs/air-quality-api">Open-Meteo Air Quality API</a> and <a href="https://open-meteo.com/en/docs/geocoding-api">Geocoding API</a> (free, no key). AQI scales: US EPA (current 2024 table, EPA-454/B-24-002) and CPCB National Air Quality Index, India (2014) — CPCB AQI is computed here from trailing 24-hour / 8-hour means. Guidelines: WHO 2021 (PM2.5 24-hour 15 µg/m³; annual 5 µg/m³).</p>
     <p><strong>Known limits:</strong> Open-Meteo is a modelled forecast, not a monitoring station; values can differ from a local station. The risk score and dose are modelled planning estimates. Gemini answers need your own key; without one you get the offline briefing.</p>
     <p>VayuMitra — built for PromptWars Virtual Challenge 06: Urban Air Quality Assistant. MIT licence. Author: Manoj Kadam / Amezing Tech. No trackers, no cookies, no server — this page runs entirely in your browser.</p>
   </div>

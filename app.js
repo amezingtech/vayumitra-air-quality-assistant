@@ -39,8 +39,10 @@
     base.setUTCMinutes(0, 0, 0);
     var pattern = [120, 122, 126, 128, 120, 111, 90, 68, 55, 47, 44, 48, 61, 68, 69, 70, 72, 72, 70, 67, 64, 62, 60, 60,
                    60, 64, 69, 71, 67, 63, 55, 43, 36, 34, 32, 33, 38, 45, 52, 58, 62, 66, 70, 74, 78, 82, 88, 95];
-    for (var i = 0; i < 48; i++) {
-      var t = new Date(base.getTime() - 12 * 3600 * 1000 + i * 3600 * 1000);
+    // 72 hours like the live request (24 past + 48 forecast), so the
+    // trailing-average CPCB computation works in demo mode too.
+    for (var i = 0; i < 72; i++) {
+      var t = new Date(base.getTime() - 36 * 3600 * 1000 + i * 3600 * 1000);
       times.push(t.toISOString().slice(0, 16));
       var p = pattern[i % pattern.length];
       pm25.push(p); pm10.push(Math.round(p * 1.9));
@@ -134,6 +136,8 @@
     currentIndex: 0,   // index of the latest hour
     isDemo: false,
     lang: 'en',
+    tz: 'UTC',         // timezone the API data is in (default UTC/GMT)
+    utcOffset: 0,      // utc_offset_seconds returned by the API
   };
 
   function $(id) { return document.getElementById(id); }
@@ -147,14 +151,23 @@
     if (v === null || v === undefined || !isFinite(v)) return '—';
     return (Math.round(v * 10) / 10).toString();
   }
-  function fmtTimeLocal(isoUtc) {
-    // API times are UTC "YYYY-MM-DDTHH:MM"; parse as UTC, show local time.
-    var d = new Date(isoUtc.length === 16 ? isoUtc + ':00Z' : isoUtc);
-    return d.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  function toMs(t) {
+    // Accepts an API time string ("YYYY-MM-DDTHH:MM", wall time in the
+    // data's timezone) or an epoch-ms number; returns epoch ms.
+    if (typeof t === 'number') return t;
+    return Core.apiTimeToMs(t, state.utcOffset);
   }
-  function fmtHourLocal(isoUtc) {
-    var d = new Date(isoUtc.length === 16 ? isoUtc + ':00Z' : isoUtc);
-    return d.toLocaleString(undefined, { hour: 'numeric' });
+  function fmtTimeLocal(t) {
+    // API times are wall times in the data timezone (UTC by default);
+    // convert to an absolute instant, then show in the viewer's local time.
+    var ms = toMs(t);
+    if (ms === null || ms === undefined) return '—';
+    return new Date(ms).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  }
+  function fmtHourLocal(t) {
+    var ms = toMs(t);
+    if (ms === null || ms === undefined) return '—';
+    return new Date(ms).toLocaleString(undefined, { hour: 'numeric' });
   }
   function t(key) { return I18N[state.lang][key] || I18N.en[key]; }
 
@@ -172,6 +185,11 @@
     $('demo-note').hidden = true;
     var url = 'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' + encodeURIComponent(lat) +
       '&longitude=' + encodeURIComponent(lon) +
+      '&timezone=UTC' +
+      // past_days=1 so a full trailing 24 hours exists at ANY hour of the
+      // day (without it, the response starts at 00:00 UTC today and the
+      // CPCB/EPA trailing averages would be unavailable before ~16:00 UTC).
+      '&past_days=1' +
       '&hourly=pm2_5,pm10,ozone,nitrogen_dioxide,sulphur_dioxide,carbon_monoxide,us_aqi,european_aqi&forecast_days=2';
     return fetchWithTimeout(url).then(function (res) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -181,11 +199,18 @@
         throw new Error('Empty response');
       }
       state.hourly = data.hourly;
+      // The API answers with the timezone it used; default (and the
+      // explicit timezone=UTC above) is GMT, offset 0. Times are wall
+      // times in that zone — parsed with apiTimeToMs, never assumed.
+      state.tz = data.timezone || 'UTC';
+      state.utcOffset = (typeof data.utc_offset_seconds === 'number') ? data.utc_offset_seconds : 0;
       state.isDemo = false;
       renderAll();
       setStatus('Live data for ' + placeName + ' — updated just now.');
     }).catch(function (err) {
       state.hourly = DEMO;
+      state.tz = 'UTC';
+      state.utcOffset = 0;
       state.isDemo = true;
       renderAll();
       $('demo-note').hidden = false;
@@ -226,10 +251,62 @@
     var now = Date.now();
     var idx = 0;
     for (var i = 0; i < times.length; i++) {
-      var t = new Date(times[i].length === 16 ? times[i] + ':00Z' : times[i]).getTime();
-      if (t <= now) idx = i; else break;
+      var t = Core.apiTimeToMs(times[i], state.utcOffset);
+      if (t !== null && t <= now) idx = i; else break;
     }
     return idx;
+  }
+
+  /* Trailing averages ending at hour `i`, in the averaging periods the
+   * official indices require: 24-hour means for PM2.5/PM10/NO2/SO2,
+   * 8-hour means for O3/CO. The 24-hour means need at least 16 hours
+   * of data (CPCB's own minimum); otherwise they are null. */
+  function trailingReadings(i) {
+    var h = state.hourly;
+    function tm(key, hours, min) {
+      var r = Core.trailingMean(h[key], i, hours, min);
+      return r ? r.mean : null;
+    }
+    return {
+      pm25_24h: tm('pm2_5', 24, 16),
+      pm10_24h: tm('pm10', 24, 16),
+      no2_24h: tm('nitrogen_dioxide', 24, 16),
+      so2_24h: tm('sulphur_dioxide', 24, 16),
+      o3_8h: tm('ozone', 8, 1),
+      o3_1h: h.ozone ? h.ozone[i] : null,
+      co_8h_mg: (function () {
+        var r = Core.trailingMean(h.carbon_monoxide, i, 8, 1);
+        return r ? r.mean / 1000 : null;
+      })(),
+    };
+  }
+
+  /* CPCB (India) AQI at hour `i`, from trailing averages. Null when
+   * there is not enough trailing data yet (needs 16 hours). */
+  function cpcbAt(i) {
+    return Core.cpcbAqiFromReadings(trailingReadings(i));
+  }
+
+  /* US EPA AQI at hour `i`, computed here from trailing averages —
+   * used ONLY as a fallback when Open-Meteo's us_aqi is missing. */
+  function epaFallbackAt(i) {
+    var h = state.hourly, t = trailingReadings(i);
+    if (t.pm25_24h === null && t.pm10_24h === null) return null;
+    return Core.epaAqiFromReadings({
+      pm25_24h: t.pm25_24h,
+      pm10_24h: t.pm10_24h,
+      o3_8h_ppm: t.o3_8h !== null ? Core.ugm3ToPpmO3(t.o3_8h) : undefined,
+      o3_1h_ppm: h.ozone ? Core.ugm3ToPpmO3(h.ozone[i]) : undefined,
+      co_8h_ppm: t.co_8h_mg !== null ? Core.ugm3ToPpmCo(t.co_8h_mg * 1000) : undefined,
+      no2_1h_ppb: h.nitrogen_dioxide ? Core.ugm3ToPpbNo2(h.nitrogen_dioxide[i]) : undefined,
+      so2_1h_ppb: h.sulphur_dioxide ? Core.ugm3ToPpbSo2(h.sulphur_dioxide[i]) : undefined,
+      so2_24h_ppb: t.so2_24h !== null ? Core.ugm3ToPpbSo2(t.so2_24h) : undefined,
+    });
+  }
+
+  /* This hour's AQI, from this hour's PM2.5 on the current EPA table. */
+  function hourlyAqiAt(i) {
+    return Core.aqiFromPm25(state.hourly.pm2_5[i]);
   }
 
   function renderAll() {
@@ -243,19 +320,49 @@
 
   function renderCurrent() {
     var h = state.hourly, i = state.currentIndex;
-    var aqi = h.us_aqi ? h.us_aqi[i] : Core.aqiFromPm25(h.pm2_5[i]);
-    var cat = Core.aqiCategory(aqi);
+    // Headline daily US AQI: Open-Meteo's us_aqi is built from trailing
+    // 24-hour averages, so it moves slowly and is the right "today" number.
+    // If it is ever missing, fall back to our own EPA computation.
+    var daily = null;
+    if (h.us_aqi && h.us_aqi[i] !== null && h.us_aqi[i] !== undefined) {
+      daily = h.us_aqi[i];
+    } else {
+      var fb = epaFallbackAt(i);
+      daily = fb ? fb.aqi : hourlyAqiAt(i);
+    }
+    var cat = Core.aqiCategory(daily);
     var pm25 = h.pm2_5[i];
+    var hourlyAqi = hourlyAqiAt(i);
+    var cpcb = cpcbAt(i);
 
-    $('aqi-value').textContent = (aqi === null || aqi === undefined) ? '—' : String(aqi);
+    var hero = $('aqi-big');
+    hero.className = 'aqi-big' + (cat ? ' aqi-cat-' + cat.key : '');
+    $('aqi-value').textContent = (daily === null || daily === undefined) ? '—' : String(daily);
     var badge = $('aqi-category-badge');
     badge.textContent = cat ? cat.label : '—';
     badge.className = 'badge ' + (cat ? 'badge-' + cat.key : 'badge-unknown');
+    $('aqi-gauge-marker').style.left = (daily === null ? 0 : Math.min(100, (daily / 500) * 100)).toFixed(1) + '%';
     $('aqi-advice').textContent = cat ? (t('healthNote')[cat.key] || cat.advice) : '—';
     $('aqi-place').textContent = state.placeName + (state.isDemo ? ' (demo)' : '');
     $('aqi-updated').textContent = 'Updated ' + fmtTimeLocal(h.time[i]);
+    $('aqi-hourly').textContent = (hourlyAqi === null || hourlyAqi === undefined)
+      ? '—' : hourlyAqi + ' (' + (Core.aqiCategory(hourlyAqi) || {}).label + ')';
     $('aqi-eu').textContent = (h.european_aqi && h.european_aqi[i] !== null && h.european_aqi[i] !== undefined)
       ? String(h.european_aqi[i]) : '—';
+
+    var cpcbEl = $('aqi-cpcb');
+    var cpcbBadge = $('aqi-cpcb-badge');
+    if (cpcb) {
+      var cpcbCat = Core.cpcbCategory(cpcb.aqi);
+      var domLabels = { pm2_5: 'PM2.5', pm10: 'PM10', nitrogen_dioxide: 'NO₂', sulphur_dioxide: 'SO₂', ozone: 'O₃', carbon_monoxide: 'CO' };
+      cpcbEl.textContent = String(cpcb.aqi) + ' — driven by ' + (domLabels[cpcb.dominant] || cpcb.dominant);
+      cpcbBadge.textContent = cpcbCat ? cpcbCat.label : '—';
+      cpcbBadge.className = 'badge ' + (cpcbCat ? 'badge-cpcb-' + cpcbCat.key : 'badge-unknown');
+    } else {
+      cpcbEl.textContent = '— (needs 16 hours of trailing data)';
+      cpcbBadge.textContent = '—';
+      cpcbBadge.className = 'badge badge-unknown';
+    }
 
     // Dominant pollutant = highest ratio vs its WHO guideline.
     var domKey = null, domRatio = 0;
@@ -268,25 +375,44 @@
       }
     });
     $('aqi-dominant').textContent = domKey ? domKey + ' (' + domRatio.toFixed(1) + '× WHO guideline)' : '—';
+    $('aqi-source').textContent = 'Source: Open-Meteo Air Quality API · Data timezone: ' +
+      state.tz + ' · Times shown in your local time · CPCB AQI from trailing 24-hour / 8-hour means.';
 
-    // Pollutant table.
-    var tbody = document.querySelector('#pollutant-table tbody');
-    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+    // Pollutant bars: each row shows the value, the WHO guideline, the
+    // ratio, and a bar (track = 0 to 2× the guideline; the tick at the
+    // middle marks the guideline itself).
+    var list = $('pollutant-bars');
+    while (list.firstChild) list.removeChild(list.firstChild);
     POLLUTANTS.forEach(function (p) {
       var v = h[p.key] ? h[p.key][i] : null;
       var g = Core.WHO_GUIDELINES_24H[p.key];
-      var tr = document.createElement('tr');
-      var tdName = el('td', p.label + (p.note ? ' — ' + p.note : ''));
-      var tdVal = el('td', v === null || v === undefined ? '—' : fmtNum(v));
-      var tdGuide = el('td', String(g));
-      var tdVs = el('td', '—');
+      var li = document.createElement('li');
+      li.className = 'pollutant-row';
+      var head = document.createElement('div');
+      head.className = 'pollutant-head';
+      head.appendChild(el('span', p.label + (p.note ? ' — ' + p.note : '')));
+      head.appendChild(el('strong', (v === null || v === undefined) ? '—' : fmtNum(v) + ' µg/m³'));
+      li.appendChild(head);
+      var track = document.createElement('div');
+      track.className = 'pollutant-track';
+      var fill = document.createElement('span');
+      fill.className = 'pollutant-fill';
       if (typeof v === 'number' && g) {
         var ratio = v / g;
-        tdVs.textContent = ratio.toFixed(1) + '×';
-        if (ratio > 1) tdVs.className = 'over';
+        fill.style.width = Math.min(100, (ratio / 2) * 100).toFixed(1) + '%';
+        fill.classList.add(ratio <= 1 ? 'fill-ok' : ratio <= 2 ? 'fill-warn' : 'fill-bad');
       }
-      tr.appendChild(tdName); tr.appendChild(tdVal); tr.appendChild(tdGuide); tr.appendChild(tdVs);
-      tbody.appendChild(tr);
+      track.appendChild(fill);
+      var tick = document.createElement('span');
+      tick.className = 'pollutant-tick';
+      tick.title = 'WHO guideline';
+      track.appendChild(tick);
+      li.appendChild(track);
+      var meta = el('p', 'WHO guideline: ' + g + ' µg/m³ · ' +
+        ((typeof v === 'number' && g) ? (v / g).toFixed(1) + '× the guideline' : '—'));
+      meta.className = 'pollutant-meta';
+      li.appendChild(meta);
+      list.appendChild(li);
     });
     void pm25;
   }
@@ -307,7 +433,7 @@
     var svg = document.createElementNS(svgNS, 'svg');
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
     svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label', 'Hourly US AQI for the next 24 hours');
+    svg.setAttribute('aria-label', 'Hourly US AQI for the next 24 hours, computed from each hour\u2019s PM2.5');
 
     // Category colour per AQI value.
     function catClass(aqi) {
@@ -332,8 +458,12 @@
     });
 
     var bestIdx = -1, bestVal = Infinity, worstIdx = -1, worstVal = -Infinity;
+    var hourlyAqis = [];
     for (var k = 0; k < n; k++) {
-      var aqi = h.us_aqi ? h.us_aqi[start + k] : Core.aqiFromPm25(h.pm2_5[start + k]);
+      // Hourly AQI from that hour's PM2.5 (current EPA table) — the
+      // daily us_aqi from Open-Meteo moves too slowly to chart per hour.
+      var aqi = hourlyAqiAt(start + k);
+      hourlyAqis.push(aqi);
       if (aqi === null || aqi === undefined) aqi = 0;
       var barH = Math.min(aqi, maxAqi) / maxAqi * (H - padT - padB);
       var x = padL + k * bw + 1;
@@ -343,7 +473,7 @@
       rect.setAttribute('width', Math.max(1, bw - 2).toFixed(1)); rect.setAttribute('height', Math.max(1, barH).toFixed(1));
       rect.setAttribute('fill', colors[catClass(aqi)] || '#666');
       var title = document.createElementNS(svgNS, 'title');
-      title.textContent = fmtHourLocal(h.time[start + k]) + ' — US AQI ' + aqi + ' (' + (Core.aqiCategory(aqi) || {}).label + ')';
+      title.textContent = fmtHourLocal(h.time[start + k]) + ' — hourly US AQI ' + aqi + ' (' + (Core.aqiCategory(aqi) || {}).label + ')';
       rect.appendChild(title);
       svg.appendChild(rect);
       if (k % 3 === 0) {
@@ -357,11 +487,34 @@
       if (aqi < bestVal) { bestVal = aqi; bestIdx = k; }
       if (aqi > worstVal) { worstVal = aqi; worstIdx = k; }
     }
+    // Mark the cleanest and worst hours with an outline + a label.
+    [[bestIdx, 'Best', '#1a7f37'], [worstIdx, 'Worst', '#b91c1c']].forEach(function (mark) {
+      var mk = mark[0];
+      if (mk < 0) return;
+      var aqi = hourlyAqis[mk];
+      var barH = Math.min(aqi, maxAqi) / maxAqi * (H - padT - padB);
+      var x = padL + mk * bw + 1;
+      var y = H - padB - barH;
+      var outline = document.createElementNS(svgNS, 'rect');
+      outline.setAttribute('x', (x - 2).toFixed(1)); outline.setAttribute('y', (y - 2).toFixed(1));
+      outline.setAttribute('width', (Math.max(1, bw - 2) + 4).toFixed(1));
+      outline.setAttribute('height', (Math.max(1, barH) + 4).toFixed(1));
+      outline.setAttribute('fill', 'none'); outline.setAttribute('stroke', mark[2]);
+      outline.setAttribute('stroke-width', '2.5');
+      svg.appendChild(outline);
+      var tag = document.createElementNS(svgNS, 'text');
+      tag.setAttribute('x', (x + bw / 2).toFixed(1));
+      tag.setAttribute('y', Math.max(12, y - 6).toFixed(1));
+      tag.setAttribute('font-size', '11'); tag.setAttribute('font-weight', '700');
+      tag.setAttribute('fill', mark[2]); tag.setAttribute('text-anchor', 'middle');
+      tag.textContent = mark[1];
+      svg.appendChild(tag);
+    });
     container.appendChild(svg);
 
     var best = $('best-worst');
-    best.textContent = 'Cleanest hour: ' + fmtTimeLocal(h.time[start + bestIdx]) + ' (US AQI ' + bestVal + '). ' +
-      'Worst hour: ' + fmtTimeLocal(h.time[start + worstIdx]) + ' (US AQI ' + worstVal + ').';
+    best.textContent = 'Cleanest hour: ' + fmtTimeLocal(h.time[start + bestIdx]) + ' (hourly US AQI ' + bestVal + '). ' +
+      'Worst hour: ' + fmtTimeLocal(h.time[start + worstIdx]) + ' (hourly US AQI ' + worstVal + ').';
   }
 
   function renderStartTimes() {
@@ -374,7 +527,7 @@
       var opt = document.createElement('option');
       opt.value = String(k);
       opt.textContent = fmtTimeLocal(h.time[start + k]) +
-        ' — AQI ' + (h.us_aqi ? h.us_aqi[start + k] : Core.aqiFromPm25(h.pm2_5[start + k]));
+        ' — hourly AQI ' + hourlyAqiAt(start + k);
       sel.appendChild(opt);
     }
   }
@@ -480,7 +633,9 @@
     var startOffset = parseInt($('start-time').value, 10) || 0;
     var idx = Math.min(state.currentIndex + startOffset, h.time.length - 1);
     var pm25 = h.pm2_5[idx];
-    var aqi = h.us_aqi ? h.us_aqi[idx] : Core.aqiFromPm25(pm25);
+    // Hourly AQI for the planned hour (from that hour's PM2.5), so the
+    // score matches the air you will actually breathe — not the daily AQI.
+    var aqi = hourlyAqiAt(idx);
 
     var score = Core.riskScore({ pm25: pm25, aqi: aqi, activity: activity, durationMinutes: duration, profiles: profiles });
     var verdict = Core.riskVerdict(score);
@@ -493,7 +648,7 @@
     vBadge.textContent = t('verdicts')[verdict.key] + ' — ' + verdict.label;
     vBadge.className = 'badge badge-' + verdict.key;
     $('risk-dose').textContent = 'At ' + fmtTimeLocal(h.time[idx]) + ': PM2.5 ' + Math.round(pm25) +
-      ' µg/m³, US AQI ' + aqi + '. Modelled inhaled dose: about ' + Math.round(dose) +
+      ' µg/m³, hourly US AQI ' + aqi + '. Modelled inhaled dose: about ' + Math.round(dose) +
       ' µg of PM2.5 (estimate, not a measurement).';
     var ul = $('risk-reasons');
     while (ul.firstChild) ul.removeChild(ul.firstChild);
@@ -533,9 +688,12 @@
     var h = state.hourly;
     if (!h) return 'Air data not loaded yet.';
     var i = state.currentIndex;
-    var aqi = h.us_aqi ? h.us_aqi[i] : Core.aqiFromPm25(h.pm2_5[i]);
+    var aqi = h.us_aqi ? h.us_aqi[i] : hourlyAqiAt(i);
     var cat = Core.aqiCategory(aqi);
-    return state.placeName + ': US AQI ' + aqi + ' (' + (cat ? cat.label : 'unknown') + '), ' +
+    var cpcb = cpcbAt(i);
+    return state.placeName + ': daily US AQI ' + aqi + ' (' + (cat ? cat.label : 'unknown') + '), ' +
+      'this hour ' + hourlyAqiAt(i) + ', CPCB AQI ' +
+      (cpcb ? cpcb.aqi + ' (' + Core.cpcbCategory(cpcb.aqi).label + ')' : 'not available yet') + ', ' +
       'PM2.5 ' + Math.round(h.pm2_5[i]) + ' µg/m³ (WHO 24-hour guideline 15), ' +
       'PM10 ' + Math.round(h.pm10[i]) + ', NO₂ ' + Math.round(h.nitrogen_dioxide[i]) +
       ', O₃ ' + Math.round(h.ozone[i]) + ' µg/m³. Household: ' +
@@ -546,19 +704,22 @@
   function offlineBriefing(question) {
     var h = state.hourly;
     var i = state.currentIndex;
-    var aqi = h.us_aqi ? h.us_aqi[i] : Core.aqiFromPm25(h.pm2_5[i]);
+    var aqi = h.us_aqi ? h.us_aqi[i] : hourlyAqiAt(i);
     var cat = Core.aqiCategory(aqi);
+    var cpcb = cpcbAt(i);
     var profiles = selectedProfiles();
     var score = Core.riskScore({
-      pm25: h.pm2_5[i], aqi: aqi, activity: $('activity').value,
+      pm25: h.pm2_5[i], aqi: hourlyAqiAt(i), activity: $('activity').value,
       durationMinutes: parseInt($('duration').value, 10) || 30, profiles: profiles,
     });
     var verdict = Core.riskVerdict(score);
     var best = Core.bestWindow(h.pm2_5.map(function (v, j) { return { time: h.time[j], pm25: v }; }).slice(i, i + 24), 60);
     var lines = [];
     lines.push('Offline briefing — add a Gemini key for a personalised AI answer.');
-    lines.push('Right now in ' + state.placeName + ': US AQI ' + aqi + ' (' + (cat ? cat.label : 'unknown') +
-      '), PM2.5 ' + Math.round(h.pm2_5[i]) + ' µg/m³, about ' +
+    lines.push('Right now in ' + state.placeName + ': daily US AQI ' + aqi + ' (' + (cat ? cat.label : 'unknown') +
+      '), this hour ' + hourlyAqiAt(i) + ', CPCB AQI ' +
+      (cpcb ? cpcb.aqi + ' (' + Core.cpcbCategory(cpcb.aqi).label + ')' : 'not available yet') +
+      ', PM2.5 ' + Math.round(h.pm2_5[i]) + ' µg/m³, about ' +
       (h.pm2_5[i] / 15).toFixed(1) + '× the WHO 24-hour guideline.');
     lines.push('For your household (' + profiles.join(', ') + ') and a ' + $('duration').value +
       '-minute ' + $('activity').value + ': risk score ' + score + '/100 — ' + verdict.label + '.');
@@ -662,6 +823,10 @@
     $('search-form').addEventListener('submit', function (e) {
       e.preventDefault();
       searchCity($('city-input').value);
+    });
+
+    $('refresh-btn').addEventListener('click', function () {
+      loadAir(state.lat, state.lon, state.placeName);
     });
 
     $('geo-btn').addEventListener('click', function () {
