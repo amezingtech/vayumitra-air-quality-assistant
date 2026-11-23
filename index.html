@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="VayuMitra — a free, GenAI-powered Urban Air Quality Assistant. Live AQI, a family activity planner, low-emission routines and indoor air hacks for winter smog.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://air-quality-api.open-meteo.com https://geocoding-api.open-meteo.com https://generativelanguage.googleapis.com; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<title>VayuMitra — Urban Air Quality Assistant</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <p class="brand" lang="hi">वायुमित्र <span aria-hidden="true">·</span> <span lang="en">VayuMitra</span></p>
+    <p class="tagline" data-i18n="tagline">Urban Air Quality Assistant — breathe smarter through winter smog.</p>
+    <div class="lang-switch" role="group" aria-label="Language / भाषा / भाषा">
+      <label for="lang-select">Language</label>
+      <select id="lang-select">
+        <option value="en" selected>English</option>
+        <option value="hi">हिन्दी (Hindi)</option>
+        <option value="mr">मराठी (Marathi)</option>
+      </select>
+    </div>
+  </div>
+</header>
+
+<main id="main" class="wrap">
+
+  <!-- ============ 1. Location ============ -->
+  <section aria-labelledby="location-heading" class="card">
+    <h1 id="location-heading">Check the air where you live</h1>
+    <p class="lede" data-i18n="lede">Live air quality from the Open-Meteo Air Quality API (free, no key needed). Pick a city, search any place, or use your location.</p>
+
+    <form id="search-form" class="search-row">
+      <label for="city-input">City or place</label>
+      <input id="city-input" type="search" maxlength="80" autocomplete="off"
+             placeholder="e.g. Delhi, Pune, Satara" value="Delhi">
+      <button type="submit" class="btn btn-primary">Search</button>
+      <button type="button" id="geo-btn" class="btn">Use my location</button>
+    </form>
+
+    <div class="chips" role="group" aria-label="Quick cities">
+      <span class="chips-label" id="chips-label">Quick cities:</span>
+      <!-- chips are built by app.js from a fixed list -->
+    </div>
+
+    <p id="status" class="status" role="status" aria-live="polite">Loading Delhi…</p>
+    <p id="demo-note" class="demo-note" hidden><strong>Demo data — live API unavailable.</strong> The numbers below are a labelled example, not live measurements. Check your connection and try again.</p>
+  </section>
+
+  <!-- ============ 2. Current AQI ============ -->
+  <section aria-labelledby="aqi-heading" class="card" id="aqi-section">
+    <h2 id="aqi-heading">Current air quality</h2>
+    <div class="aqi-grid">
+      <div class="aqi-big" id="aqi-big" aria-live="polite">
+        <p class="aqi-number"><span id="aqi-value">—</span><span class="aqi-unit"> US AQI</span></p>
+        <p class="aqi-category"><span id="aqi-category-badge" class="badge badge-unknown">—</span></p>
+        <p id="aqi-advice" class="aqi-advice">—</p>
+        <p class="aqi-meta"><span id="aqi-place">Delhi</span> · <span id="aqi-updated">—</span></p>
+        <p class="aqi-meta">EU AQI: <span id="aqi-eu">—</span> · Dominant pollutant: <span id="aqi-dominant">—</span></p>
+      </div>
+      <div>
+        <h3>Pollutants <span class="small">(µg/m³, latest hour)</span></h3>
+        <table class="pollutants" id="pollutant-table">
+          <caption class="visually-hidden">Pollutant concentrations compared with WHO 2021 guideline values</caption>
+          <thead><tr><th scope="col">Pollutant</th><th scope="col">Now</th><th scope="col">WHO guideline</th><th scope="col">vs guideline</th></tr></thead>
+          <tbody><!-- built by app.js --></tbody>
+        </table>
+        <p class="small">WHO 2021 guidelines shown are 24-hour means, except ozone (peak-season 8-hour mean) and carbon monoxide (4 mg/m³ = 4000 µg/m³, 24-hour mean).</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3. 24-hour forecast ============ -->
+  <section aria-labelledby="forecast-heading" class="card">
+    <h2 id="forecast-heading">Next 24 hours</h2>
+    <p class="small">Hourly US AQI forecast. Each bar is coloured by its AQI category (green to dark red).</p>
+    <div id="chart" role="img" aria-label="Hourly air quality forecast chart">Loading chart…</div>
+    <p id="best-worst" class="best-worst" aria-live="polite"></p>
+  </section>
+
+  <!-- ============ 4. Family & activity planner ============ -->
+  <section aria-labelledby="planner-heading" class="card">
+    <h2 id="planner-heading">Family &amp; activity planner</h2>
+    <p class="lede" data-i18n="planner-lede">Plan one outdoor activity. The score is deterministic — the same inputs always give the same score — and every reason is shown.</p>
+
+    <form id="planner-form">
+      <fieldset>
+        <legend>Who is going out? (choose all that apply)</legend>
+        <div class="check-grid">
+          <label><input type="checkbox" name="profile" value="healthy" checked> Healthy adult</label>
+          <label><input type="checkbox" name="profile" value="child"> Child under 12</label>
+          <label><input type="checkbox" name="profile" value="senior"> Senior 65+</label>
+          <label><input type="checkbox" name="profile" value="asthma"> Asthma or lung condition</label>
+          <label><input type="checkbox" name="profile" value="pregnant"> Pregnant</label>
+        </div>
+      </fieldset>
+
+      <div class="form-grid">
+        <div>
+          <label for="activity">Activity</label>
+          <select id="activity">
+            <option value="walk" selected>Walk</option>
+            <option value="run">Run</option>
+            <option value="cycling">Cycling</option>
+            <option value="school-pickup">School pickup (walking)</option>
+            <option value="outdoor-work">Outdoor work</option>
+          </select>
+        </div>
+        <div>
+          <label for="duration">Duration (minutes, 5–240)</label>
+          <input id="duration" type="number" min="5" max="240" step="5" value="30">
+        </div>
+        <div>
+          <label for="start-time">Start time (next 24 hours)</label>
+          <select id="start-time"><!-- built by app.js --></select>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Check this plan</button>
+    </form>
+
+    <div id="planner-result" class="planner-result" aria-live="polite" hidden>
+      <p class="score-line">Risk score: <strong id="risk-score">—</strong> / 100 · <span id="risk-verdict" class="badge">—</span></p>
+      <p id="risk-dose" class="small"></p>
+      <ul id="risk-reasons"></ul>
+    </div>
+
+    <div id="shift-result" class="shift-result" aria-live="polite" hidden>
+      <h3>What if I shift it?</h3>
+      <p id="shift-text"></p>
+    </div>
+
+    <details class="how">
+      <summary>How the score works</summary>
+      <p><strong>Formula:</strong> score = round( (US AQI × 0.30 + inhaled dose ÷ 8) × vulnerability ), capped at 0–100.</p>
+      <ul>
+        <li><strong>Inhaled dose (modelled estimate) = PM2.5 × breathing rate × duration.</strong> Breathing rates are standard planning assumptions, not measured values: rest 0.5, walk 1.1, cycling 2.2, run 3.0 m³/hour; outdoor work 1.6, school pickup 1.1.</li>
+        <li><strong>Vulnerability:</strong> healthy adult ×1.0, child under 12 ×1.3, senior 65+ ×1.3, asthma/lung condition ×1.6, pregnant ×1.4. The highest selected multiplier applies.</li>
+        <li><strong>Verdicts:</strong> 0–24 Go · 25–49 Go with care · 50–74 Avoid · 75–100 Skip.</li>
+        <li>The score is a planning aid, not medical advice. If you have a lung condition, follow your doctor's advice first.</li>
+      </ul>
+    </details>
+  </section>
+
+  <!-- ============ 5. Routines, hacks & swaps ============ -->
+  <section aria-labelledby="routines-heading" class="card">
+    <h2 id="routines-heading">Low-emission routines, indoor hacks &amp; swaps</h2>
+    <p class="lede">Practical moves for smog season, with a <em>modelled</em> impact estimate where one can be calculated from your current air. Every impact figure here is an estimate from the modelled dose — never a measured fact.</p>
+    <div class="three-col">
+      <div>
+        <h3>Low-emission daily routine</h3>
+        <ul id="routine-list" class="tip-list"></ul>
+      </div>
+      <div>
+        <h3>Indoor air hacks</h3>
+        <ul id="hack-list" class="tip-list"></ul>
+      </div>
+      <div>
+        <h3>Sustainable swaps</h3>
+        <ul id="swap-list" class="tip-list"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 6. GenAI assistant ============ -->
+  <section aria-labelledby="assistant-heading" class="card">
+    <h2 id="assistant-heading">Ask VayuMitra</h2>
+    <p class="lede">Get a short, plain-language briefing for your household. With your own Gemini key you get a personalised AI answer; without one you still get a briefing built from the live data — clearly labelled either way.</p>
+
+    <details class="how">
+      <summary>Gemini key (optional, BYOK — bring your own key)</summary>
+      <p>Your key is stored <strong>only in this browser's localStorage</strong> and is sent only to Google's Generative Language API (<code>generativelanguage.googleapis.com</code>). It is never sent anywhere else and never leaves your device except for that one call. Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.</p>
+      <div class="key-row">
+        <label for="gemini-key">Gemini API key</label>
+        <input id="gemini-key" type="password" maxlength="100" autocomplete="off" placeholder="Paste your key here">
+        <button type="button" id="save-key-btn" class="btn">Save key</button>
+        <button type="button" id="remove-key-btn" class="btn">Remove key</button>
+      </div>
+      <p id="key-status" class="small" role="status" aria-live="polite">No key saved — the assistant will use the offline briefing.</p>
+    </details>
+
+    <div id="chat-log" class="chat-log" aria-live="polite" aria-label="Conversation with VayuMitra"></div>
+
+    <div class="suggested" role="group" aria-label="Suggested questions">
+      <span class="small">Try:</span>
+      <button type="button" class="chip-btn" data-q="Is it safe for my child to play outside today?">Is it safe for my child to play outside?</button>
+      <button type="button" class="chip-btn" data-q="What is the best time for a morning walk today?">Best time for a morning walk?</button>
+      <button type="button" class="chip-btn" data-q="How can I keep indoor air clean during smog?">How do I keep indoor air clean?</button>
+      <button type="button" class="chip-btn" data-q="Should I wear a mask today, and which type?">Should I wear a mask today?</button>
+    </div>
+
+    <form id="chat-form" class="chat-form">
+      <label for="chat-input">Your question</label>
+      <input id="chat-input" type="text" maxlength="300" autocomplete="off" placeholder="Ask about today's air, routines, masks…">
+      <button type="submit" class="btn btn-primary">Ask</button>
+    </form>
+    <p class="small">The assistant uses today's live AQI, your household profile and your planned activity. It is general information, not medical advice.</p>
+  </section>
+
+  <!-- ============ 7. Key recommendations (translated) ============ -->
+  <section aria-labelledby="advice-heading" class="card">
+    <h2 id="advice-heading">Today's key advice</h2>
+    <ul id="advice-list" class="tip-list"></ul>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p><strong>Data:</strong> Live air quality &amp; geocoding: <a href="https://open-meteo.com/en/docs/air-quality-api">Open-Meteo Air Quality API</a> and <a href="https://open-meteo.com/en/docs/geocoding-api">Geocoding API</a> (free, no key). AQI categories: US EPA. Guidelines: WHO 2021 (PM2.5 24-hour 15 µg/m³; annual 5 µg/m³).</p>
+    <p><strong>Known limits:</strong> Open-Meteo is a modelled forecast, not a monitoring station; values can differ from a local station. The risk score and dose are modelled planning estimates. Gemini answers need your own key; without one you get the offline briefing.</p>
+    <p>VayuMitra — built for PromptWars Virtual Challenge 06: Urban Air Quality Assistant. MIT licence. Author: Manoj Kadam / Amezing Tech. No trackers, no cookies, no server — this page runs entirely in your browser.</p>
+  </div>
+</footer>
+
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
