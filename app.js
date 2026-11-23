@@ -746,6 +746,7 @@
     div.appendChild(document.createTextNode(text));
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
+    return div;
   }
 
   function askAssistant(question) {
@@ -757,7 +758,7 @@
       addChatMessage('VayuMitra', offlineBriefing(q), 'Offline briefing');
       return;
     }
-    addChatMessage('VayuMitra', 'Thinking…', 'Gemini');
+    var thinkingEl = addChatMessage('VayuMitra', 'Thinking…', 'Gemini');
     var prompt = 'You are VayuMitra, a friendly urban air quality assistant for families in India. ' +
       'Answer in short, plain language in ' + (state.lang === 'hi' ? 'Hindi' : state.lang === 'mr' ? 'Marathi' : 'English') +
       ', under 120 words, no medical diagnosis. Current conditions: ' + contextSummary() +
@@ -770,15 +771,13 @@
     }).then(function (data) {
       var text = '';
       try { text = data.candidates[0].content.parts.map(function (p) { return p.text || ''; }).join(''); } catch (e) { text = ''; }
-      var log = $('chat-log');
-      var last = log.querySelector('.chat-msg.assistant:last-child');
-      if (last) log.removeChild(last);
+      // Remove exactly this question's "Thinking…" bubble (not the last
+      // one in the log — two quick questions must not eat each other).
+      if (thinkingEl && thinkingEl.parentNode) thinkingEl.parentNode.removeChild(thinkingEl);
       if (text) addChatMessage('VayuMitra', text, 'Gemini · gemini-2.5-flash');
       else addChatMessage('VayuMitra', offlineBriefing(q), 'Offline briefing');
     }).catch(function () {
-      var log = $('chat-log');
-      var last = log.querySelector('.chat-msg.assistant:last-child');
-      if (last) log.removeChild(last);
+      if (thinkingEl && thinkingEl.parentNode) thinkingEl.parentNode.removeChild(thinkingEl);
       addChatMessage('VayuMitra',
         'Gemini could not be reached (check the key and your connection). Here is the offline briefing instead:\n' + offlineBriefing(q),
         'Offline briefing');
