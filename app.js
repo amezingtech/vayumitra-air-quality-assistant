@@ -645,7 +645,7 @@
     result.hidden = false;
     $('risk-score').textContent = String(score);
     var vBadge = $('risk-verdict');
-    vBadge.textContent = t('verdicts')[verdict.key] + ' — ' + verdict.label;
+    vBadge.textContent = t('verdicts')[verdict.key];
     vBadge.className = 'badge badge-' + verdict.key;
     $('risk-dose').textContent = 'At ' + fmtTimeLocal(h.time[idx]) + ': PM2.5 ' + Math.round(pm25) +
       ' µg/m³, hourly US AQI ' + aqi + '. Modelled inhaled dose: about ' + Math.round(dose) +
